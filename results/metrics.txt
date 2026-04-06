@@ -1,0 +1,16 @@
+Evaluation on Test Set
+==================================================
+Accuracy  : 0.9259
+Precision : 0.9259
+Recall    : 0.9259
+F1-score  : 0.9259
+
+Per-class report:
+              precision    recall  f1-score   support
+
+        fake       0.93      0.93      0.93        41
+        real       0.93      0.93      0.93        40
+
+    accuracy                           0.93        81
+   macro avg       0.93      0.93      0.93        81
+weighted avg       0.93      0.93      0.93        81
