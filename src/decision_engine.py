@@ -2,7 +2,6 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-
 # We define the four possible final verdict labels.
 # FAKE means we have strong evidence of manipulation or a false claim.
 # REAL means both the image and the claim appear to be authentic.
@@ -25,13 +24,13 @@ LOW_FAKE_THRESHOLD  = 0.40
 # and we rely primarily on the CNN signal instead.
 MIN_TEXT_CONFIDENCE = 0.20
 
-
-def decide(p_fake, text_verdict, text_confidence, text_found):
-    # We receive four inputs from the two upstream modules.
+def decide(p_fake, text_verdict, text_confidence, text_found, llm_explanation=""):
+    # We receive five inputs from the two upstream modules.
     # p_fake is the probability that the image is fake according to the CNN.
     # text_verdict is the RAG verdict: "support", "refute" or "unknown".
     # text_confidence is how confident the RAG module is in its verdict.
     # text_found indicates whether the OCR module found usable text in the image.
+    # llm_explanation is the optional one-sentence reasoning produced by the LLM.
 
     # We build a list of reasons that we will return alongside the verdict
     # so the final output is fully explainable to the user.
@@ -75,7 +74,7 @@ def decide(p_fake, text_verdict, text_confidence, text_found):
             reasons.append("Neither the image analysis nor the text evidence is conclusive.")
         return verdict, round(confidence, 4), reasons
 
- # Case 3: both signals are available and the RAG confidence is high enough.
+    # Case 3: both signals are available and the RAG confidence is high enough.
     # We now apply a set of rules that cover all meaningful combinations of
     # the CNN and RAG signals to produce the most informative final verdict.
 
@@ -86,6 +85,8 @@ def decide(p_fake, text_verdict, text_confidence, text_found):
         confidence = min((p_fake + text_confidence) / 2 + 0.1, 1.0)
         reasons.append(f"Image shows signs of manipulation (p_fake={p_fake:.2f}).")
         reasons.append(f"The textual claim is contradicted by external evidence (confidence={text_confidence:.2f}).")
+        if llm_explanation:
+            reasons.append(f"LLM reasoning: {llm_explanation}")
         return verdict, round(confidence, 4), reasons
 
     # Rule 3b: the image looks manipulated BUT the claim is supported by Wikipedia.
@@ -97,6 +98,8 @@ def decide(p_fake, text_verdict, text_confidence, text_found):
         reasons.append(f"Image shows signs of manipulation (p_fake={p_fake:.2f}).")
         reasons.append("However, the textual claim is supported by external evidence.")
         reasons.append("The image may be real but used out of context.")
+        if llm_explanation:
+            reasons.append(f"LLM reasoning: {llm_explanation}")
         return verdict, round(confidence, 4), reasons
 
     # Rule 3c: the image looks authentic AND the claim is supported by Wikipedia.
@@ -106,6 +109,8 @@ def decide(p_fake, text_verdict, text_confidence, text_found):
         confidence = min((1 - p_fake + text_confidence) / 2 + 0.1, 1.0)
         reasons.append(f"Image appears authentic (p_fake={p_fake:.2f}).")
         reasons.append(f"The textual claim is supported by external evidence (confidence={text_confidence:.2f}).")
+        if llm_explanation:
+            reasons.append(f"LLM reasoning: {llm_explanation}")
         return verdict, round(confidence, 4), reasons
 
     # Rule 3d: the image looks authentic BUT the claim is refuted by Wikipedia.
@@ -118,6 +123,8 @@ def decide(p_fake, text_verdict, text_confidence, text_found):
         reasons.append(f"Image appears authentic (p_fake={p_fake:.2f}).")
         reasons.append(f"However, the textual claim is refuted by external evidence (confidence={text_confidence:.2f}).")
         reasons.append("The image may be real but the associated claim is false.")
+        if llm_explanation:
+            reasons.append(f"LLM reasoning: {llm_explanation}")
         return verdict, round(confidence, 4), reasons
 
     # Rule 3e: the RAG verdict is UNKNOWN, meaning no relevant evidence was found.
@@ -147,22 +154,20 @@ def decide(p_fake, text_verdict, text_confidence, text_found):
     reasons.append("Signals are mixed or inconclusive.")
     return verdict, round(confidence, 4), reasons
 
-
 def print_decision(p_fake, text_verdict, text_confidence, text_found, verdict, confidence, reasons):
     print("\n" + "="*50)
     print("  Decision Engine")
     print("="*50)
-    print(f"  CNN p_fake       : {p_fake:.4f}")
-    print(f"  Text found       : {text_found}")
-    print(f"  Text verdict     : {text_verdict}")
-    print(f"  Text confidence  : {text_confidence:.4f}")
-    print(f"\n  FINAL VERDICT    : {verdict.upper()}")
-    print(f"  Confidence       : {confidence:.4f}")
+    print(f"  CNN p_fake        : {p_fake:.4f}")
+    print(f"  Text found        : {text_found}")
+    print(f"  Text verdict      : {text_verdict}")
+    print(f"  Text confidence   : {text_confidence:.4f}")
+    print(f"\n  FINAL VERDICT   : {verdict.upper()}")
+    print(f"  Confidence        : {confidence:.4f}")
     print(f"\n  Explanation:")
     for reason in reasons:
         print(f"    - {reason}")
     print("="*50)
-
 
 if __name__ == "__main__":
     # We define a set of test cases covering the main scenarios the system can encounter.
@@ -180,4 +185,4 @@ if __name__ == "__main__":
     for p_fake, text_verdict, text_conf, text_found, description in test_cases:
         print(f"\nScenario: {description}")
         verdict, confidence, reasons = decide(p_fake, text_verdict, text_conf, text_found)
-        print_decision(p_fake, text_verdict, text_conf, text_found, verdict, confidence, reasons)   
+        print_decision(p_fake, text_verdict, text_conf, text_found, verdict, confidence, reasons)

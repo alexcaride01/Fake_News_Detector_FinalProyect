@@ -26,7 +26,7 @@ UNKNOWN = "unknown"
 # When USE_LLM is False we fall back to TF-IDF cosine similarity,
 # which is faster but less capable of understanding semantic meaning.
 USE_LLM      = True
-OLLAMA_MODEL = "llama3.2:3b"
+OLLAMA_MODEL = "mistral"
 
 
 # We define the TF-IDF thresholds used when USE_LLM is False.
