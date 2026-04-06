@@ -139,6 +139,31 @@ def get_variants(img_bgr):
     variants.append(("adaptive",     adp))
     variants.append(("adaptive_inv", cv2.bitwise_not(adp)))
 
+    # We isolate white text by masking pixels with high values in all three channels.
+    # White pixels have high R, G and B values simultaneously.
+    # This works well for white text on any colored background including red.
+    white_mask = cv2.inRange(img_bgr, np.array([180, 180, 180]), np.array([255, 255, 255]))
+    white_up   = upscale(white_mask)
+    variants.append(("white_text", cv2.bitwise_not(white_up)))
+
+    # We suppress the red background by masking red pixels in HSV
+    # and replacing them with white, leaving only non-red content visible.
+    # Red in HSV wraps around 0 and 180 so we need two ranges.
+    red_mask1 = cv2.inRange(hsv, np.array([0, 100, 100]),   np.array([10, 255, 255]))
+    red_mask2 = cv2.inRange(hsv, np.array([160, 100, 100]), np.array([180, 255, 255]))
+    red_mask  = cv2.bitwise_or(red_mask1, red_mask2)
+    no_red    = img_bgr.copy()
+    no_red[red_mask > 0] = [255, 255, 255]
+    gray_no_red  = cv2.cvtColor(no_red, cv2.COLOR_BGR2GRAY)
+    _, no_red_thresh = cv2.threshold(upscale(gray_no_red), 200, 255, cv2.THRESH_BINARY_INV)
+    variants.append(("no_red_thresh", no_red_thresh))
+
+    # We also try inverting the blue channel because red pixels have low blue values
+    # while white pixels have high blue values, creating good contrast.
+    b_inv = cv2.bitwise_not(upscale(img_bgr[:, :, 0]))
+    _, b_thresh = cv2.threshold(b_inv, 100, 255, cv2.THRESH_BINARY)
+    variants.append(("blue_inv_thresh", b_thresh))
+
     return variants
 
 
