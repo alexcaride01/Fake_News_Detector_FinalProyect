@@ -12,157 +12,220 @@ from extractor import extract
 
 
 # We define three possible verdict labels that the RAG module can return.
-# SUPPORT means the Wikipedia evidence backs up the claim.
-# REFUTE means evidence was found but the claim terms do not match it.
-# UNKNOWN means there is not enough evidence to make a determination.
 SUPPORT = "support"
 REFUTE  = "refute"
 UNKNOWN = "unknown"
 
-# We define the similarity thresholds that control our verdict decisions.
-# A similarity above SUPPORT_THRESHOLD with matching claim terms gives SUPPORT.
-# A similarity above REFUTE_THRESHOLD but with no matching terms gives REFUTE.
-# Below REFUTE_THRESHOLD we always return UNKNOWN because the evidence is too weak.
+# We provide two modes for the final verdict step.
+# When USE_LLM is True we use Ollama to reason over the evidence,
+# which gives more accurate results but takes longer on CPU.
+# When USE_LLM is False we fall back to TF-IDF cosine similarity,
+# which is faster but less capable of understanding semantic meaning.
+USE_LLM      = True
+OLLAMA_MODEL = "llama3.2:1b"
+
+# We define the TF-IDF thresholds used when USE_LLM is False.
 SUPPORT_THRESHOLD = 0.15
 REFUTE_THRESHOLD  = 0.05
 MIN_PASSAGES      = 1
 
 
 def compute_similarity(claim, passages):
-    # We use TF-IDF cosine similarity to measure how topically related
-    # the claim is to each retrieved Wikipedia passage.
-    # TF-IDF weights terms by how frequently they appear in the claim
-    # relative to how common they are across all passages,
-    # which makes it a good measure of topical overlap.
+    # We use TF-IDF cosine similarity to measure topical overlap
+    # between the claim and each retrieved Wikipedia passage.
     if not passages:
         return 0.0, []
 
     vectorizer = TfidfVectorizer(stop_words="english")
 
     try:
-        # We fit the vectorizer on the claim plus all passages together
-        # so the term frequencies are computed in the same vector space.
         all_texts = [claim] + passages
         tfidf     = vectorizer.fit_transform(all_texts)
-        # We compute the cosine similarity between the claim (index 0)
-        # and each of the passages (indices 1 onwards).
-        sims = cosine_similarity(tfidf[0:1], tfidf[1:]).flatten()
+        sims      = cosine_similarity(tfidf[0:1], tfidf[1:]).flatten()
     except Exception:
         return 0.0, []
 
-    best_idx = int(np.argmax(sims))
-    best_sim = float(sims[best_idx])
-
-    # We return the passages ranked by similarity so the best evidence
-    # is always in the first position.
-    ranked = [passages[i] for i in np.argsort(sims)[::-1]]
+    best_sim = float(sims[np.argmax(sims)])
+    ranked   = [passages[i] for i in np.argsort(sims)[::-1]]
 
     return best_sim, ranked
 
 
 def claim_terms_in_evidence(claim, passages):
-    # We check how many content words from the claim appear in the evidence.
-    # This gives us a second signal complementary to TF-IDF similarity:
-    # a high similarity score combined with matching claim terms strongly
-    # suggests that the evidence is talking about the same topic as the claim.
+    # We check how many content words from the claim appear in the evidence
+    # as a second signal alongside TF-IDF similarity.
     claim_words = set(w.lower() for w in claim.split() if len(w) > 3)
     evidence    = " ".join(passages).lower()
-
-    matches = sum(1 for w in claim_words if w in evidence)
+    matches     = sum(1 for w in claim_words if w in evidence)
     return matches, len(claim_words)
 
 
-def determine_verdict(similarity, matches, total_claim_words, num_passages):
-    # We need at least one passage to make any verdict at all.
-    if num_passages < MIN_PASSAGES:
-        return UNKNOWN, 0.0
+def tfidf_verdict(claim, passages):
+    # We combine similarity score and term matching to produce a verdict.
+    # This is our fallback method when Ollama is not available.
+    similarity, ranked = compute_similarity(claim, passages)
+    matches, total     = claim_terms_in_evidence(claim, passages)
 
-    # If the similarity is below our minimum threshold, the evidence is too
-    # weakly related to the claim and we cannot draw any conclusion.
-    if similarity < REFUTE_THRESHOLD:
-        return UNKNOWN, similarity
+    if len(passages) < MIN_PASSAGES or similarity < REFUTE_THRESHOLD:
+        return UNKNOWN, round(similarity, 4), "", ranked
 
-    # If the similarity is strong enough and claim terms appear in the evidence,
-    # we conclude that the evidence supports the claim.
-    # We scale the confidence proportionally to the similarity score.
     if similarity >= SUPPORT_THRESHOLD and matches > 0:
-        confidence = min(similarity * 2, 1.0)
-        return SUPPORT, round(confidence, 4)
+        return SUPPORT, round(min(similarity * 2, 1.0), 4), "", ranked
 
-    # If there is some similarity but none of the claim terms appear in the evidence,
-    # we interpret this as the evidence being about a related but different topic,
-    # which we treat as a refutation signal.
     if similarity >= REFUTE_THRESHOLD and matches == 0:
-        confidence = min(similarity * 1.5, 1.0)
-        return REFUTE, round(confidence, 4)
+        return REFUTE, round(min(similarity * 1.5, 1.0), 4), "", ranked
 
-    return UNKNOWN, round(similarity, 4)
+    return UNKNOWN, round(similarity, 4), "", ranked
+
+
+def llm_verdict(claim, passages):
+    # We pass the claim and the Wikipedia passages to Ollama as context.
+    # The model reads both and decides whether the evidence supports,
+    # refutes or is insufficient to verify the claim.
+    # This is the Augmented Generation step of our RAG pipeline:
+    # we retrieved the evidence, augmented the prompt with it,
+    # and now the model generates the verdict and explains its reasoning.
+    try:
+        import ollama
+
+        # We join all passages into a single evidence block
+        # so the model has the full context in one place.
+        evidence = "\n\n".join(passages)
+
+        prompt = f"""You are a fact-checking assistant. Your task is to determine whether a claim is supported or refuted by the Wikipedia evidence provided.
+
+Claim: {claim}
+
+Wikipedia evidence:
+{evidence}
+
+Instructions:
+- Read the claim and the evidence carefully.
+- Start your response with exactly one of these words: support, refute, or unknown.
+- Then on a new line, write one sentence explaining why, based only on the evidence.
+- Be concise and specific. Mention the key fact from the evidence that led to your decision.
+
+Example format:
+refute
+The evidence states that X is located in Paris, France, not in London as the claim suggests.
+
+Your answer:"""
+
+        response = ollama.chat(
+            model    = OLLAMA_MODEL,
+            messages = [{"role": "user", "content": prompt}]
+        )
+
+        # We parse the first line for the verdict and the second line for the explanation.
+        # The model is instructed to put the verdict on the first line and the
+        # explanation on the second line so we can parse them reliably.
+        raw         = response["message"]["content"].strip()
+        lines       = [l.strip() for l in raw.split("\n") if l.strip()]
+        first_line  = lines[0].lower() if lines else ""
+        explanation = lines[1] if len(lines) > 1 else ""
+
+        if "support" in first_line:
+            verdict    = SUPPORT
+            confidence = 0.80
+        elif "refute" in first_line:
+            verdict    = REFUTE
+            confidence = 0.75
+        else:
+            verdict    = UNKNOWN
+            confidence = 0.0
+
+        return verdict, confidence, explanation
+
+    except ImportError:
+        # We warn the user if the ollama library is not installed
+        # and fall back to TF-IDF automatically.
+        print("Warning: ollama library not found. Falling back to TF-IDF.")
+        return None, None, ""
+
+    except Exception as e:
+        # We catch any other errors such as the Ollama server not running
+        # and fall back to TF-IDF so the pipeline does not crash.
+        print(f"Warning: Ollama error ({e}). Falling back to TF-IDF.")
+        return None, None, ""
 
 
 def run_rag(text):
-    # We run the full RAG pipeline in five steps.
-
-    # Step 1: we extract named entities and keywords from the text
-    # and build a clean Wikipedia search query.
+    # Step 1: we extract entities and keywords and build a Wikipedia search query.
     extraction = extract(text)
     query      = extraction["query"]
 
-    # If the extraction produced an empty query we cannot search for anything
-    # and we return UNKNOWN immediately.
     if not query.strip():
         return {
-            "verdict"      : UNKNOWN,
-            "confidence"   : 0.0,
-            "query"        : query,
-            "source_title" : None,
-            "source_url"   : None,
-            "best_passage" : None,
-            "similarity"   : 0.0,
-            "entities"     : extraction["entities"],
-            "keywords"     : extraction["keywords"],
+            "verdict"         : UNKNOWN,
+            "confidence"      : 0.0,
+            "query"           : query,
+            "source_title"    : None,
+            "source_url"      : None,
+            "best_passage"    : None,
+            "similarity"      : 0.0,
+            "llm_explanation" : "",
+            "entities"        : extraction["entities"],
+            "keywords"        : extraction["keywords"],
+            "llm_used"        : False,
         }
 
-    # Step 2: we search Wikipedia for relevant pages and retrieve text passages.
+    # Step 2: we search Wikipedia and retrieve relevant text passages.
     retrieval = retrieve(query)
 
-    # If no relevant Wikipedia page was found we return UNKNOWN.
     if not retrieval["found"] or not retrieval["passages"]:
         return {
-            "verdict"      : UNKNOWN,
-            "confidence"   : 0.0,
-            "query"        : query,
-            "source_title" : None,
-            "source_url"   : None,
-            "best_passage" : None,
-            "similarity"   : 0.0,
-            "entities"     : extraction["entities"],
-            "keywords"     : extraction["keywords"],
+            "verdict"         : UNKNOWN,
+            "confidence"      : 0.0,
+            "query"           : query,
+            "source_title"    : None,
+            "source_url"      : None,
+            "best_passage"    : None,
+            "similarity"      : 0.0,
+            "llm_explanation" : "",
+            "entities"        : extraction["entities"],
+            "keywords"        : extraction["keywords"],
+            "llm_used"        : False,
         }
 
-    # Step 3: we compute TF-IDF cosine similarity between the claim
-    # and each retrieved passage, and keep the best score.
-    similarity, ranked_passages = compute_similarity(text, retrieval["passages"])
+    # Step 3: we determine the verdict using either Ollama or TF-IDF.
+    llm_used        = False
+    similarity      = 0.0
+    best_passage    = retrieval["passages"][0]
+    llm_explanation = ""
 
-    # Step 4: we check how many claim terms appear in the evidence
-    # to use as a second signal alongside the similarity score.
-    matches, total = claim_terms_in_evidence(text, retrieval["passages"])
+    if USE_LLM:
+        # We try to get the verdict from Ollama first.
+        # If it fails for any reason we fall back to TF-IDF automatically.
+        print("  Sending evidence to Ollama for reasoning...")
+        verdict, confidence, llm_explanation = llm_verdict(text, retrieval["passages"])
 
-    # Step 5: we combine the similarity score and term matches
-    # to produce the final verdict and confidence score.
-    verdict, confidence = determine_verdict(
-        similarity, matches, total, len(retrieval["passages"])
-    )
+        if verdict is not None:
+            sim, ranked  = compute_similarity(text, retrieval["passages"])
+            similarity   = round(sim, 4)
+            best_passage = ranked[0] if ranked else retrieval["passages"][0]
+            llm_used     = True
+        else:
+            # We fall back to TF-IDF if Ollama is not available.
+            verdict, confidence, _, ranked = tfidf_verdict(text, retrieval["passages"])
+            similarity   = round(compute_similarity(text, retrieval["passages"])[0], 4)
+            best_passage = ranked[0] if ranked else retrieval["passages"][0]
+    else:
+        verdict, confidence, _, ranked = tfidf_verdict(text, retrieval["passages"])
+        similarity   = round(compute_similarity(text, retrieval["passages"])[0], 4)
+        best_passage = ranked[0] if ranked else retrieval["passages"][0]
 
     return {
-        "verdict"      : verdict,
-        "confidence"   : confidence,
-        "query"        : query,
-        "source_title" : retrieval["title"],
-        "source_url"   : retrieval["url"],
-        "best_passage" : ranked_passages[0] if ranked_passages else None,
-        "similarity"   : round(similarity, 4),
-        "entities"     : extraction["entities"],
-        "keywords"     : extraction["keywords"],
+        "verdict"         : verdict,
+        "confidence"      : confidence,
+        "query"           : query,
+        "source_title"    : retrieval["title"],
+        "source_url"      : retrieval["url"],
+        "best_passage"    : best_passage,
+        "similarity"      : similarity,
+        "llm_explanation" : llm_explanation,
+        "entities"        : extraction["entities"],
+        "keywords"        : extraction["keywords"],
+        "llm_used"        : llm_used,
     }
 
 
@@ -173,8 +236,11 @@ def print_rag_result(result):
     print(f"  Query          : {result['query']}")
     print(f"  Source         : {result['source_title']}")
     print(f"  Similarity     : {result['similarity']}")
+    print(f"  LLM used       : {result['llm_used']}")
     print(f"  Verdict        : {result['verdict'].upper()}")
     print(f"  Confidence     : {result['confidence']}")
+    if result["llm_explanation"]:
+        print(f"  LLM reasoning  : {result['llm_explanation']}")
     if result["best_passage"]:
         print(f"\n  Best passage   :\n  {result['best_passage'][:200]}...")
     print("="*50)
