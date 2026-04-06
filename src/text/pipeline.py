@@ -50,7 +50,8 @@ def run_text_pipeline(image_path):
         "query"         : rag_result["query"],
         "source_title"  : rag_result["source_title"],
         "source_url"    : rag_result["source_url"],
-        "similarity"    : rag_result["similarity"],
+        "similarity"      : rag_result["similarity"],
+        "llm_explanation" : rag_result.get("llm_explanation", ""),
         "entities"      : rag_result["entities"],
         "keywords"      : rag_result["keywords"],
     }
