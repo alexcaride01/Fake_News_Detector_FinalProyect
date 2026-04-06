@@ -3,12 +3,15 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
+
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 
+
 from retriever import retrieve
 from extractor import extract
+
 
 
 # We define three possible verdict labels that the RAG module can return.
@@ -16,18 +19,27 @@ SUPPORT = "support"
 REFUTE  = "refute"
 UNKNOWN = "unknown"
 
+
 # We provide two modes for the final verdict step.
 # When USE_LLM is True we use Ollama to reason over the evidence,
 # which gives more accurate results but takes longer on CPU.
 # When USE_LLM is False we fall back to TF-IDF cosine similarity,
 # which is faster but less capable of understanding semantic meaning.
 USE_LLM      = True
-OLLAMA_MODEL = "llama3.2:1b"
+OLLAMA_MODEL = "llama3.2:3b"
+
 
 # We define the TF-IDF thresholds used when USE_LLM is False.
 SUPPORT_THRESHOLD = 0.15
 REFUTE_THRESHOLD  = 0.05
 MIN_PASSAGES      = 1
+
+# We define the TF-IDF similarity thresholds used to modulate the LLM confidence
+# when Ollama is available. The LLM always decides the verdict; TF-IDF only
+# adjusts the confidence score up or down based on the quality of the evidence.
+TFIDF_BOOST_THRESHOLD   = 0.15
+TFIDF_PENALTY_THRESHOLD = 0.05
+
 
 
 def compute_similarity(claim, passages):
@@ -51,6 +63,7 @@ def compute_similarity(claim, passages):
     return best_sim, ranked
 
 
+
 def claim_terms_in_evidence(claim, passages):
     # We check how many content words from the claim appear in the evidence
     # as a second signal alongside TF-IDF similarity.
@@ -58,6 +71,7 @@ def claim_terms_in_evidence(claim, passages):
     evidence    = " ".join(passages).lower()
     matches     = sum(1 for w in claim_words if w in evidence)
     return matches, len(claim_words)
+
 
 
 def tfidf_verdict(claim, passages):
@@ -76,6 +90,20 @@ def tfidf_verdict(claim, passages):
         return REFUTE, round(min(similarity * 1.5, 1.0), 4), "", ranked
 
     return UNKNOWN, round(similarity, 4), "", ranked
+
+
+
+def modulate_confidence_with_tfidf(confidence, similarity):
+    # We use TF-IDF similarity as a secondary signal to modulate the LLM confidence.
+    # The LLM verdict is never changed; only the confidence score is adjusted slightly.
+    # If similarity is very low the evidence may not be relevant, so we penalize.
+    # If similarity is high we apply a small boost to reinforce the LLM decision.
+    if similarity < TFIDF_PENALTY_THRESHOLD:
+        return round(confidence * 0.6, 4)
+    elif similarity >= TFIDF_BOOST_THRESHOLD:
+        return round(min(confidence + 0.05, 1.0), 4)
+    return round(confidence, 4)
+
 
 
 def llm_verdict(claim, passages):
@@ -149,6 +177,7 @@ Your answer:"""
         return None, None, ""
 
 
+
 def run_rag(text):
     # Step 1: we extract entities and keywords and build a Wikipedia search query.
     extraction = extract(text)
@@ -204,6 +233,10 @@ def run_rag(text):
             similarity   = round(sim, 4)
             best_passage = ranked[0] if ranked else retrieval["passages"][0]
             llm_used     = True
+            # We use TF-IDF as a confidence modulator, not as a decision maker.
+            # The LLM verdict is always final; TF-IDF only adjusts the confidence
+            # score slightly based on the topical overlap with the evidence.
+            confidence = modulate_confidence_with_tfidf(confidence, similarity)
         else:
             # We fall back to TF-IDF if Ollama is not available.
             verdict, confidence, _, ranked = tfidf_verdict(text, retrieval["passages"])
@@ -229,6 +262,7 @@ def run_rag(text):
     }
 
 
+
 def print_rag_result(result):
     print("\n" + "="*50)
     print("  RAG Text Analysis")
@@ -244,6 +278,7 @@ def print_rag_result(result):
     if result["best_passage"]:
         print(f"\n  Best passage   :\n  {result['best_passage'][:200]}...")
     print("="*50)
+
 
 
 if __name__ == "__main__":
