@@ -1,0 +1,813 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fake News Detector</title>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+
+        :root {
+            --bg: #0d1117;
+            --surface: #161b22;
+            --surface2: #1c2333;
+            --border: rgba(255,255,255,0.08);
+            --border-hover: rgba(255,255,255,0.16);
+            --text: #e6edf3;
+            --muted: #7d8590;
+            --accent: #4493f8;
+            --accent-dim: rgba(68,147,248,0.12);
+            --red: #f85149;
+            --red-dim: rgba(248,81,73,0.12);
+            --green: #3fb950;
+            --green-dim: rgba(63,185,80,0.12);
+            --orange: #d29922;
+            --orange-dim: rgba(210,153,34,0.12);
+            --purple: #bc8cff;
+            --purple-dim: rgba(188,140,255,0.12);
+        }
+
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            font-size: 14px;
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+
+        .topbar {
+            border-bottom: 1px solid var(--border);
+            padding: 0 24px;
+            height: 56px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            position: sticky;
+            top: 0;
+            background: var(--bg);
+            z-index: 10;
+        }
+
+
+        .topbar-icon {
+            width: 28px;
+            height: 28px;
+            background: var(--accent-dim);
+            border: 1px solid var(--accent);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+        }
+
+
+        .topbar h1 {
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text);
+            letter-spacing: -0.2px;
+        }
+
+
+        .topbar span {
+            font-size: 12px;
+            color: var(--muted);
+            margin-left: 4px;
+        }
+
+
+        .layout {
+            max-width: 960px;
+            margin: 0 auto;
+            padding: 32px 24px;
+        }
+
+
+        .hero {
+            text-align: center;
+            margin-bottom: 36px;
+        }
+
+
+        .hero h2 {
+            font-size: 28px;
+            font-weight: 700;
+            letter-spacing: -0.8px;
+            color: var(--text);
+            line-height: 1.2;
+        }
+
+
+        .hero p {
+            color: var(--muted);
+            margin-top: 8px;
+            font-size: 15px;
+        }
+
+
+        .upload-zone {
+            border: 1.5px dashed var(--border-hover);
+            border-radius: 14px;
+            background: var(--surface);
+            padding: 48px 24px;
+            text-align: center;
+            cursor: pointer;
+            transition: border-color 0.2s, background 0.2s;
+        }
+
+
+        .upload-zone:hover, .upload-zone.over {
+            border-color: var(--accent);
+            background: var(--accent-dim);
+        }
+
+
+        .upload-zone input { display: none; }
+
+
+        .upload-zone svg { margin-bottom: 12px; opacity: 0.5; }
+
+
+        .upload-zone p { color: var(--muted); font-size: 13px; }
+
+
+        .upload-zone strong { color: var(--accent); }
+
+
+        .preview-wrap {
+            display: none;
+            margin-top: 20px;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            text-align: center;
+            background: var(--surface);
+        }
+
+
+        .preview-wrap img {
+            max-height: 300px;
+            max-width: 100%;
+            display: block;
+            margin: 0 auto;
+        }
+
+
+        .preview-name {
+            padding: 10px 16px;
+            font-size: 12px;
+            color: var(--muted);
+            border-top: 1px solid var(--border);
+        }
+
+
+        .btn-primary {
+            display: block;
+            width: 100%;
+            margin-top: 16px;
+            padding: 12px;
+            background: var(--accent);
+            color: #fff;
+            border: none;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+
+        .btn-primary:hover { opacity: 0.88; }
+        .btn-primary:disabled { opacity: 0.3; cursor: not-allowed; }
+
+
+        .loading {
+            display: none;
+            margin-top: 32px;
+            text-align: center;
+        }
+
+
+        .loading-bar {
+            height: 3px;
+            background: var(--surface2);
+            border-radius: 99px;
+            overflow: hidden;
+            margin-bottom: 12px;
+        }
+
+
+        .loading-fill {
+            height: 100%;
+            width: 40%;
+            background: var(--accent);
+            border-radius: 99px;
+            animation: slide 1.2s ease-in-out infinite;
+        }
+
+
+        @keyframes slide {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(350%); }
+        }
+
+
+        .loading p { color: var(--muted); font-size: 13px; }
+
+
+        .results { display: none; margin-top: 36px; }
+
+
+        .verdict-card {
+            border-radius: 14px;
+            padding: 28px 24px;
+            margin-bottom: 24px;
+            border: 1px solid;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+
+        .verdict-card.fake    { background: var(--red-dim);    border-color: rgba(248,81,73,0.3);    }
+        .verdict-card.real    { background: var(--green-dim);   border-color: rgba(63,185,80,0.3);   }
+        .verdict-card.doubtful{ background: var(--orange-dim);  border-color: rgba(210,153,34,0.3);  }
+        .verdict-card.unknown { background: var(--purple-dim);  border-color: rgba(188,140,255,0.3); }
+
+
+        .verdict-left {}
+
+
+        .verdict-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 12px;
+            border-radius: 99px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+        }
+
+
+        .verdict-card.fake     .verdict-badge { background: rgba(248,81,73,0.2);    color: var(--red);    border: 1px solid rgba(248,81,73,0.4);    }
+        .verdict-card.real     .verdict-badge { background: rgba(63,185,80,0.2);    color: var(--green);  border: 1px solid rgba(63,185,80,0.4);    }
+        .verdict-card.doubtful .verdict-badge { background: rgba(210,153,34,0.2);   color: var(--orange); border: 1px solid rgba(210,153,34,0.4);   }
+        .verdict-card.unknown  .verdict-badge { background: rgba(188,140,255,0.2);  color: var(--purple); border: 1px solid rgba(188,140,255,0.4);  }
+
+
+        .verdict-title {
+            font-size: 26px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+        }
+
+
+        .verdict-card.fake     .verdict-title { color: var(--red);    }
+        .verdict-card.real     .verdict-title { color: var(--green);  }
+        .verdict-card.doubtful .verdict-title { color: var(--orange); }
+        .verdict-card.unknown  .verdict-title { color: var(--purple); }
+
+
+        .verdict-sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+
+
+        .conf-circle {
+            width: 80px;
+            height: 80px;
+            flex-shrink: 0;
+        }
+
+
+        .conf-circle text {
+            font-family: -apple-system, sans-serif;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+
+        .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+
+
+        @media (max-width: 580px) { .grid-2 { grid-template-columns: 1fr; } }
+
+
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 18px 20px;
+        }
+
+
+        .card-title {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+            color: var(--muted);
+            margin-bottom: 16px;
+            font-weight: 600;
+        }
+
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
+        }
+
+
+        .stat-label { color: var(--muted); font-size: 13px; }
+        .stat-val   { font-weight: 600; font-size: 13px; color: var(--text); }
+
+
+        .prog-track {
+            background: var(--surface2);
+            border-radius: 99px;
+            height: 6px;
+            overflow: hidden;
+            margin-bottom: 12px;
+        }
+
+
+        .prog-fill {
+            height: 100%;
+            border-radius: 99px;
+            transition: width 0.7s cubic-bezier(.4,0,.2,1);
+        }
+
+
+        .fill-red    { background: var(--red);    }
+        .fill-green  { background: var(--green);  }
+        .fill-accent { background: var(--accent); }
+        .fill-orange { background: var(--orange); }
+
+
+        .text-tag {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 99px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+        }
+
+
+        .tag-support  { background: var(--green-dim);   color: var(--green);  border: 1px solid rgba(63,185,80,0.3);   }
+        .tag-refute   { background: var(--red-dim);     color: var(--red);    border: 1px solid rgba(248,81,73,0.3);   }
+        .tag-unknown  { background: var(--purple-dim);  color: var(--purple); border: 1px solid rgba(188,140,255,0.3); }
+
+
+        .wiki-link {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--accent);
+            text-decoration: none;
+            font-size: 12px;
+            margin-top: 10px;
+            padding: 7px 10px;
+            background: var(--accent-dim);
+            border-radius: 7px;
+            border: 1px solid rgba(68,147,248,0.2);
+            transition: opacity 0.2s;
+        }
+
+
+        .wiki-link:hover { opacity: 0.8; }
+
+
+        .ocr-box {
+            margin-top: 12px;
+            background: var(--surface2);
+            border-radius: 8px;
+            padding: 10px 12px;
+            font-size: 12px;
+            color: var(--muted);
+            line-height: 1.6;
+            font-style: italic;
+            max-height: 80px;
+            overflow-y: auto;
+            word-break: break-word;
+        }
+
+
+        .no-text-notice {
+            margin-top: 12px;
+            padding: 10px 12px;
+            border-radius: 8px;
+            background: var(--surface2);
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+
+        .llm-box {
+            margin-top: 12px;
+            background: var(--surface2);
+            border-radius: 8px;
+            padding: 10px 12px;
+            font-size: 12px;
+            color: var(--green);
+            line-height: 1.6;
+            border: 1px solid rgba(63,185,80,0.2);
+        }
+
+        .llm-box-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            color: var(--muted);
+            margin-bottom: 4px;
+            font-weight: 600;
+        }
+
+
+        .explanation-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 18px 20px;
+            margin-bottom: 16px;
+        }
+
+
+        .reason {
+            display: flex;
+            gap: 10px;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 13px;
+            color: var(--muted);
+            line-height: 1.5;
+        }
+
+
+        .reason:last-child { border-bottom: none; padding-bottom: 0; }
+
+
+        .reason-arrow {
+            color: var(--accent);
+            flex-shrink: 0;
+            margin-top: 1px;
+        }
+
+
+        .sim-note {
+            font-size: 11px;
+            color: var(--muted);
+            margin-top: 4px;
+        }
+
+
+        .btn-reset {
+            display: block;
+            width: 100%;
+            margin-top: 8px;
+            padding: 11px;
+            background: transparent;
+            color: var(--muted);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: color 0.2s, border-color 0.2s;
+        }
+
+
+        .btn-reset:hover { color: var(--text); border-color: var(--border-hover); }
+    </style>
+</head>
+<body>
+
+
+<div class="topbar">
+    <div class="topbar-icon">🔍</div>
+    <h1>Fake News Detector <span>— Multimodal Analysis System</span></h1>
+</div>
+
+
+<div class="layout">
+    <div class="hero">
+        <h2>Upload a news image to analyze it</h2>
+        <p>The system combines visual CNN analysis and text fact-checking via Wikipedia RAG</p>
+    </div>
+
+
+    <div class="upload-zone" id="drop-zone">
+        <input type="file" id="file-input" accept="image/*">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        <p><strong>Click to upload</strong> or drag and drop</p>
+        <p style="margin-top:4px">PNG, JPG, JPEG</p>
+    </div>
+
+
+    <div class="preview-wrap" id="preview-wrap">
+        <img id="preview-img" src="" alt="Preview">
+        <div class="preview-name" id="preview-name"></div>
+    </div>
+
+
+    <button class="btn-primary" id="analyze-btn" disabled>Analyze image</button>
+
+
+    <div class="loading" id="loading">
+        <div class="loading-bar"><div class="loading-fill"></div></div>
+        <p>Running visual and text analysis — this may take a moment...</p>
+    </div>
+
+
+    <div class="results" id="results">
+
+
+        <div class="verdict-card" id="verdict-card">
+            <div class="verdict-left">
+                <div class="verdict-badge" id="verdict-badge"></div>
+                <div class="verdict-title" id="verdict-title"></div>
+                <div class="verdict-sub" id="verdict-sub"></div>
+            </div>
+            <svg class="conf-circle" id="conf-svg" viewBox="0 0 80 80">
+                <circle cx="40" cy="40" r="32" fill="none" stroke="#1c2333" stroke-width="7"/>
+                <circle cx="40" cy="40" r="32" fill="none" stroke-width="7"
+                    stroke-dasharray="201" stroke-dashoffset="201"
+                    stroke-linecap="round" transform="rotate(-90 40 40)"
+                    id="conf-arc"/>
+                <text x="40" y="37" text-anchor="middle" fill="#e6edf3" id="conf-pct">0%</text>
+                <text x="40" y="52" text-anchor="middle" fill="#7d8590" font-size="9">confidence</text>
+            </svg>
+        </div>
+
+
+        <div class="grid-2">
+
+
+            <div class="card">
+                <div class="card-title">🧠 Visual module — CNN</div>
+
+
+                <div class="stat-row">
+                    <span class="stat-label">p(fake)</span>
+                    <span class="stat-val" id="p-fake-v"></span>
+                </div>
+                <div class="prog-track"><div class="prog-fill fill-red" id="bar-fake"></div></div>
+
+
+                <div class="stat-row">
+                    <span class="stat-label">p(real)</span>
+                    <span class="stat-val" id="p-real-v"></span>
+                </div>
+                <div class="prog-track"><div class="prog-fill fill-green" id="bar-real"></div></div>
+
+
+                <div class="stat-row" style="margin-top:4px">
+                    <span class="stat-label" style="font-size:11px;color:var(--muted)">MobileNetV3-Small · Transfer learning</span>
+                </div>
+            </div>
+
+
+            <div class="card">
+                <div class="card-title">📝 Text module — RAG</div>
+
+
+                <div class="stat-row">
+                    <span class="stat-label">Text found</span>
+                    <span class="stat-val" id="text-found-v"></span>
+                </div>
+
+
+                <div class="stat-row">
+                    <span class="stat-label">RAG verdict</span>
+                    <span id="rag-tag"></span>
+                </div>
+
+
+                <div class="stat-row" style="margin-top:8px">
+                    <span class="stat-label">Similarity score</span>
+                    <span class="stat-val" id="sim-v"></span>
+                </div>
+                <div class="prog-track"><div class="prog-fill fill-accent" id="bar-sim"></div></div>
+                <div class="sim-note" id="method-note">TF-IDF cosine similarity vs Wikipedia evidence</div>
+
+
+                <div id="wiki-area"></div>
+                <div id="ocr-area"></div>
+                <div id="llm-explanation-area"></div>
+            </div>
+        </div>
+
+
+        <div class="explanation-card">
+            <div class="card-title">💡 Decision engine — explanation</div>
+            <div id="reasons"></div>
+        </div>
+
+
+        <button class="btn-reset" id="reset-btn">Analyze another image</button>
+    </div>
+</div>
+
+
+<script>
+const drop      = document.getElementById("drop-zone");
+const fileInput = document.getElementById("file-input");
+const analyzeBtn= document.getElementById("analyze-btn");
+const previewW  = document.getElementById("preview-wrap");
+const previewI  = document.getElementById("preview-img");
+const previewN  = document.getElementById("preview-name");
+const loading   = document.getElementById("loading");
+const results   = document.getElementById("results");
+const resetBtn  = document.getElementById("reset-btn");
+
+
+let selectedFile = null;
+
+
+drop.addEventListener("click", () => fileInput.click());
+
+
+fileInput.addEventListener("change", () => {
+    if (fileInput.files[0]) setFile(fileInput.files[0]);
+});
+
+
+drop.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("over"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", e => {
+    e.preventDefault();
+    drop.classList.remove("over");
+    if (e.dataTransfer.files[0]) setFile(e.dataTransfer.files[0]);
+});
+
+
+function setFile(f) {
+    selectedFile = f;
+    previewI.src = URL.createObjectURL(f);
+    previewN.textContent = f.name;
+    previewW.style.display = "block";
+    analyzeBtn.disabled = false;
+    results.style.display = "none";
+}
+
+
+analyzeBtn.addEventListener("click", async () => {
+    if (!selectedFile) return;
+    analyzeBtn.disabled = true;
+    loading.style.display = "block";
+    results.style.display = "none";
+
+
+    const fd = new FormData();
+    fd.append("file", selectedFile);
+
+
+    try {
+        const res  = await fetch("/analyze", { method: "POST", body: fd });
+        const data = await res.json();
+        render(data);
+    } catch(e) {
+        alert("Server error. Make sure uvicorn is running.");
+    } finally {
+        loading.style.display = "none";
+        analyzeBtn.disabled = false;
+    }
+});
+
+
+function render(d) {
+    const v    = d.decision.verdict;
+    const conf = d.decision.confidence;
+
+
+    const card = document.getElementById("verdict-card");
+    card.className = "verdict-card " + v;
+
+
+    const labels = { fake: "Likely fake", real: "Likely real", doubtful: "Doubtful", unknown: "Unknown" };
+    const subs   = { fake: "Strong evidence of manipulation or false claim", real: "Image and claim appear authentic", doubtful: "Signals are mixed — investigate further", unknown: "Not enough evidence to decide" };
+
+
+    document.getElementById("verdict-badge").textContent = v.toUpperCase();
+    document.getElementById("verdict-badge").className   = "verdict-badge";
+    document.getElementById("verdict-title").textContent = labels[v] || v;
+    document.getElementById("verdict-sub").textContent   = subs[v] || "";
+
+
+    const arcColors = { fake: "#f85149", real: "#3fb950", doubtful: "#d29922", unknown: "#bc8cff" };
+    const arc = document.getElementById("conf-arc");
+    arc.setAttribute("stroke", arcColors[v] || "#4493f8");
+    const offset = 201 - (conf * 201);
+    arc.setAttribute("stroke-dashoffset", offset.toFixed(1));
+    document.getElementById("conf-pct").textContent = Math.round(conf * 100) + "%";
+
+
+    const pFake = d.visual.p_fake;
+    const pReal = d.visual.p_real;
+    document.getElementById("p-fake-v").textContent = (pFake * 100).toFixed(1) + "%";
+    document.getElementById("p-real-v").textContent = (pReal * 100).toFixed(1) + "%";
+    document.getElementById("bar-fake").style.width = (pFake * 100) + "%";
+    document.getElementById("bar-real").style.width = (pReal * 100) + "%";
+
+
+    const tf = d.text.text_found;
+    document.getElementById("text-found-v").textContent = tf ? "Yes" : "No";
+
+
+    const tv  = d.text.verdict;
+    const tag = document.getElementById("rag-tag");
+    tag.className = "text-tag tag-" + tv;
+    tag.textContent = tv;
+
+
+    const sim = d.text.similarity;
+    document.getElementById("sim-v").textContent = (sim * 100).toFixed(1) + "%";
+    document.getElementById("bar-sim").style.width = Math.min(sim * 400, 100) + "%";
+
+
+    const methodNote = document.getElementById("method-note");
+    if (d.text.llm_used) {
+        methodNote.textContent = "Verdict generated by Ollama LLM reasoning over Wikipedia evidence";
+        methodNote.style.color = "var(--green)";
+    } else {
+        methodNote.textContent = "TF-IDF cosine similarity vs Wikipedia evidence";
+        methodNote.style.color = "";
+    }
+
+
+    const wikiArea = document.getElementById("wiki-area");
+    if (d.text.source_title) {
+        wikiArea.innerHTML = `<a class="wiki-link" href="${d.text.source_url}" target="_blank">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 010 20M12 2a15.3 15.3 0 000 20"/></svg>
+            Wikipedia: ${d.text.source_title}
+        </a>`;
+    } else {
+        wikiArea.innerHTML = `<div class="no-text-notice">No Wikipedia source found</div>`;
+    }
+
+
+    const ocrArea = document.getElementById("ocr-area");
+    if (tf && d.text.extracted_text) {
+        ocrArea.innerHTML = `<div class="ocr-box">"${d.text.extracted_text}"</div>`;
+    } else if (!tf) {
+        ocrArea.innerHTML = `<div class="no-text-notice">No readable text found in this image</div>`;
+    } else {
+        ocrArea.innerHTML = "";
+    }
+
+    // We show the LLM reasoning box only when Ollama was used and returned an explanation.
+    const llmArea = document.getElementById("llm-explanation-area");
+    if (d.text.llm_used && d.text.llm_explanation) {
+        llmArea.innerHTML = `
+            <div class="llm-box">
+                <div class="llm-box-label">🤖 LLM reasoning</div>
+                ${d.text.llm_explanation}
+            </div>`;
+    } else {
+        llmArea.innerHTML = "";
+    }
+
+
+    const reasonsEl = document.getElementById("reasons");
+    reasonsEl.innerHTML = "";
+    d.decision.reasons.forEach(r => {
+        const div = document.createElement("div");
+        div.className = "reason";
+        div.innerHTML = `<span class="reason-arrow">→</span><span>${r}</span>`;
+        reasonsEl.appendChild(div);
+    });
+
+
+    results.style.display = "block";
+    results.scrollIntoView({ behavior: "smooth" });
+}
+
+
+resetBtn.addEventListener("click", () => {
+    selectedFile = null;
+    fileInput.value = "";
+    previewW.style.display = "none";
+    results.style.display = "none";
+    analyzeBtn.disabled = true;
+});
+</script>
+</body>
+</html>
