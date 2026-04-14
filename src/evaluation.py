@@ -2,6 +2,7 @@ import os
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 
 from sklearn.metrics import (
     accuracy_score,
@@ -10,6 +11,10 @@ from sklearn.metrics import (
     f1_score,
     confusion_matrix,
     classification_report,
+    roc_curve,
+    auc,
+    precision_recall_curve,
+    average_precision_score,
 )
 
 from model import build_model, get_device
@@ -23,7 +28,6 @@ from dataset import get_dataloaders
 DATA_DIR       = "dataset"
 CHECKPOINT_DIR = "checkpoints"
 RESULTS_DIR    = "results"
-# We load the best model from Phase 2 since it achieved the highest validation accuracy.
 CHECKPOINT     = "phase2_best.pth"
 BATCH_SIZE     = 32
 
@@ -124,9 +128,124 @@ def plot_confusion_matrix(preds, labels, class_names):
 
     plt.tight_layout()
     path = os.path.join(RESULTS_DIR, "confusion_matrix.png")
-    plt.savefig(path)
+    plt.savefig(path, dpi=150)
     plt.close()
     print(f"Confusion matrix saved -> {path}")
+
+    return cm
+
+
+def plot_roc_curve(labels, probs):
+    # We plot the ROC curve which shows the trade-off between true positive rate
+    # and false positive rate at different classification thresholds.
+    # We use class 0 (fake) as the positive class.
+    fpr, tpr, _ = roc_curve(labels, probs[:, 0], pos_label=0)
+    roc_auc     = auc(fpr, tpr)
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+    ax.plot(fpr, tpr, color="steelblue", lw=2,
+            label=f"ROC curve (AUC = {roc_auc:.3f})")
+    ax.plot([0, 1], [0, 1], color="gray", lw=1, linestyle="--", label="Random classifier")
+    ax.fill_between(fpr, tpr, alpha=0.1, color="steelblue")
+    ax.set_xlim([0.0, 1.0])
+    ax.set_ylim([0.0, 1.05])
+    ax.set_xlabel("False Positive Rate")
+    ax.set_ylabel("True Positive Rate")
+    ax.set_title("ROC Curve - Test Set")
+    ax.legend(loc="lower right")
+
+    plt.tight_layout()
+    path = os.path.join(RESULTS_DIR, "roc_curve.png")
+    plt.savefig(path, dpi=150)
+    plt.close()
+    print(f"ROC curve saved -> {path}")
+
+
+def plot_precision_recall_curve(labels, probs):
+    # We plot the precision-recall curve which is particularly informative
+    # when the dataset has class imbalance. A good model keeps high precision
+    # even at high recall values.
+    precision_curve, recall_curve, _ = precision_recall_curve(
+        (labels == 0).astype(int), probs[:, 0]
+    )
+    ap = average_precision_score((labels == 0).astype(int), probs[:, 0])
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+    ax.plot(recall_curve, precision_curve, color="darkorange", lw=2,
+            label=f"PR curve (AP = {ap:.3f})")
+    ax.fill_between(recall_curve, precision_curve, alpha=0.1, color="darkorange")
+    ax.set_xlim([0.0, 1.0])
+    ax.set_ylim([0.0, 1.05])
+    ax.set_xlabel("Recall")
+    ax.set_ylabel("Precision")
+    ax.set_title("Precision-Recall Curve (fake class)")
+    ax.legend(loc="upper right")
+
+    plt.tight_layout()
+    path = os.path.join(RESULTS_DIR, "precision_recall_curve.png")
+    plt.savefig(path, dpi=150)
+    plt.close()
+    print(f"Precision-recall curve saved -> {path}")
+
+
+def plot_probability_distribution(labels, probs):
+    # We plot the distribution of predicted fake probabilities separately for
+    # true fake and true real images. A well-trained model should show two clearly
+    # separated peaks near 0 and 1 with little overlap in the middle.
+    fake_probs_on_fakes = probs[labels == 0, 0]
+    fake_probs_on_reals = probs[labels == 1, 0]
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+    ax.hist(fake_probs_on_fakes, bins=20, alpha=0.6, color="red",
+            label="True fake images", density=True)
+    ax.hist(fake_probs_on_reals, bins=20, alpha=0.6, color="green",
+            label="True real images", density=True)
+    ax.axvline(x=0.5, color="black", linestyle="--", lw=1.5, label="Decision boundary (0.5)")
+    ax.set_xlabel("p(fake)")
+    ax.set_ylabel("Density")
+    ax.set_title("Predicted Probability Distribution - Test Set")
+    ax.legend()
+
+    plt.tight_layout()
+    path = os.path.join(RESULTS_DIR, "probability_distribution.png")
+    plt.savefig(path, dpi=150)
+    plt.close()
+    print(f"Probability distribution saved -> {path}")
+
+
+def plot_per_class_metrics(preds, labels, class_names):
+    # We plot a bar chart comparing precision, recall and F1 for each class side by side.
+    # This makes it easy to spot if the model is performing differently on fake vs real images.
+    prec_per_class = precision_score(labels, preds, average=None)
+    rec_per_class  = recall_score(labels, preds, average=None)
+    f1_per_class   = f1_score(labels, preds, average=None)
+
+    x     = np.arange(len(class_names))
+    width = 0.25
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+    bars_p = ax.bar(x - width, prec_per_class, width, label="Precision", color="steelblue")
+    bars_r = ax.bar(x,         rec_per_class,  width, label="Recall",    color="darkorange")
+    bars_f = ax.bar(x + width, f1_per_class,   width, label="F1-score",  color="green")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(class_names)
+    ax.set_ylim([0, 1.15])
+    ax.set_ylabel("Score")
+    ax.set_title("Per-class Metrics - Test Set")
+    ax.legend()
+
+    # We annotate each bar with its value for easy reading.
+    for bar, val in zip(list(bars_p) + list(bars_r) + list(bars_f),
+                        list(prec_per_class) + list(rec_per_class) + list(f1_per_class)):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.02,
+                f"{val:.2f}", ha="center", va="bottom", fontsize=9)
+
+    plt.tight_layout()
+    path = os.path.join(RESULTS_DIR, "per_class_metrics.png")
+    plt.savefig(path, dpi=150)
+    plt.close()
+    print(f"Per-class metrics saved -> {path}")
 
 
 def save_metrics(metrics, class_names, preds, labels):
@@ -137,7 +256,7 @@ def save_metrics(metrics, class_names, preds, labels):
 
     with open(path, "w") as f:
         f.write("Evaluation on Test Set\n")
-        f.write("="*50 + "\n")
+        f.write("=" * 50 + "\n")
         f.write(f"Accuracy  : {metrics['accuracy']:.4f}\n")
         f.write(f"Precision : {metrics['precision']:.4f}\n")
         f.write(f"Recall    : {metrics['recall']:.4f}\n")
@@ -164,13 +283,18 @@ if __name__ == "__main__":
     model.to(device)
     print(f"Model loaded from {checkpoint_path}")
 
-    # We run inference on the full test set and collect all predictions.
+    # We run inference on the full test set and collect all predictions and probabilities.
     preds, labels, probs = get_predictions(model, dataloaders["test"], device)
 
-    # We compute all metrics and print them to the console.
+    # We compute and print the standard metrics as before.
     metrics = compute_metrics(preds, labels, class_names)
 
-    # We save both the confusion matrix image and the metrics text file
-    # to the results folder so they are ready to include in our report.
+    # We generate all plots individually so each one can be included separately in the paper.
     plot_confusion_matrix(preds, labels, class_names)
+    plot_roc_curve(labels, probs)
+    plot_precision_recall_curve(labels, probs)
+    plot_probability_distribution(labels, probs)
+    plot_per_class_metrics(preds, labels, class_names)
+
+    # We save the metrics text file as before.
     save_metrics(metrics, class_names, preds, labels)
